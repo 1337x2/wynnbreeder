@@ -152,7 +152,7 @@ button.secondary:hover {
 }
 
 .help-content {
-  max-height: 350px;
+  max-height: 80%;
   overflow: auto;
   line-height: 1.45;
 }
@@ -214,4 +214,16 @@ button.secondary:hover {
   .help-content {
     max-height: none;
   }
+}
+.max-level {
+   display: flex;
+   align-items: center;
+   gap: 8px;
+   margin-bottom: 12px;
+   padding: 6px;
+}
+
+#maxLevel {
+   width: 50%;
+   margin-left: 20%;
 }

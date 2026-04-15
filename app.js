@@ -187,6 +187,7 @@ const MATERIALS_BY_LEVEL = [
 ];
 
 const statsGrid = typeof document !== "undefined" ? document.getElementById("statsGrid") : null;
+const maxLevelInput = typeof document !== "undefined" ? document.getElementById("maxLevel") : null;
 const output = typeof document !== "undefined" ? document.getElementById("output") : null;
 const calcBtn = typeof document !== "undefined" ? document.getElementById("calcBtn") : null;
 const resetBtn = typeof document !== "undefined" ? document.getElementById("resetBtn") : null;
@@ -230,48 +231,104 @@ function buildNeed(ist, soll) {
   return STATS.map((s) => Math.max(0, soll[s] - ist[s]));
 }
 
-function applyMaterial(need, materialBonus) {
-  return need.map((value, index) => Math.max(0, value - (materialBonus[STATS[index]] || 0)));
+function toStateKey(state) {
+  return state.join(",");
 }
 
 function optimizeMaterials(need, materials) {
-  const memo = new Map();
-
-  function dp(state) {
-    const key = state.join(",");
-    if (memo.has(key)) {
-      return memo.get(key);
+  const statCount = STATS.length;
+  const normalizedMaterials = materials.map(([name, bonus]) => {
+    const bonusVector = new Array(statCount);
+    for (let i = 0; i < statCount; i += 1) {
+      bonusVector[i] = bonus[STATS[i]] || 0;
     }
+    return { name, bonusVector };
+  });
 
-    if (state.every((v) => v === 0)) {
-      const solved = { count: 0, path: [] };
-      memo.set(key, solved);
-      return solved;
+  let startIsZero = true;
+  for (let i = 0; i < statCount; i += 1) {
+    if (need[i] !== 0) {
+      startIsZero = false;
+      break;
     }
+  }
 
-    let bestCount = INF;
-    let bestPath = null;
+  if (startIsZero) {
+    return { count: 0, path: [] };
+  }
 
-    for (const [name, bonus] of materials) {
-      const nextState = applyMaterial(state, bonus);
-      if (nextState.every((value, idx) => value === state[idx])) {
+  const startState = need.slice();
+  const startKey = toStateKey(startState);
+  const visited = new Set([startKey]);
+  const parent = new Map();
+  const queue = [startState];
+  let head = 0;
+  let solvedKey = null;
+
+  while (head < queue.length) {
+    const state = queue[head];
+    head += 1;
+    const stateKey = toStateKey(state);
+
+    for (const material of normalizedMaterials) {
+      let changed = false;
+      let allZero = true;
+      const nextState = new Array(statCount);
+
+      for (let i = 0; i < statCount; i += 1) {
+        const reduced = state[i] - material.bonusVector[i];
+        const nextValue = reduced > 0 ? reduced : 0;
+        nextState[i] = nextValue;
+        if (nextValue !== state[i]) {
+          changed = true;
+        }
+        if (nextValue !== 0) {
+          allZero = false;
+        }
+      }
+
+      if (!changed) {
         continue;
       }
 
-      const sub = dp(nextState);
-      const candidateCount = sub.count + 1;
-      if (candidateCount < bestCount) {
-        bestCount = candidateCount;
-        bestPath = [name, ...sub.path];
+      const nextKey = toStateKey(nextState);
+      if (visited.has(nextKey)) {
+        continue;
       }
+
+      visited.add(nextKey);
+      parent.set(nextKey, { prevKey: stateKey, material: material.name });
+
+      if (allZero) {
+        solvedKey = nextKey;
+        break;
+      }
+
+      queue.push(nextState);
     }
 
-    const result = { count: bestCount, path: bestPath };
-    memo.set(key, result);
-    return result;
+    if (solvedKey !== null) {
+      break;
+    }
   }
 
-  return dp(need);
+  if (solvedKey === null) {
+    return { count: INF, path: null };
+  }
+
+  const path = [];
+  let cursor = solvedKey;
+  while (cursor !== startKey) {
+    const step = parent.get(cursor);
+    if (!step) {
+      return { count: INF, path: null };
+    }
+    path.push(step.material);
+    cursor = step.prevKey;
+  }
+
+  path.reverse();
+  return { count: path.length, path };
 }
 
 function getHighestStat(ist) {
@@ -297,7 +354,7 @@ function getMaterialsForLevel(highestStat) {
   return null;
 }
 
-function calculateMountPlan(ist, soll) {
+function calculateMountPlan(ist, soll, maxLevel = null) {
   const missingStats = {};
   for (const stat of STATS) {
     missingStats[stat] = Math.max(0, soll[stat] - ist[stat]);
@@ -305,7 +362,8 @@ function calculateMountPlan(ist, soll) {
 
   const { highestStat, highestStatName } = getHighestStat(ist);
   const need = buildNeed(ist, soll);
-  const materials = getMaterialsForLevel(highestStat);
+  const materialsLevel = Number.isFinite(maxLevel) ? maxLevel : highestStat;
+  const materials = getMaterialsForLevel(materialsLevel);
 
   if (materials === null) {
     return {
@@ -314,7 +372,7 @@ function calculateMountPlan(ist, soll) {
       highestStatName,
       count: INF,
       picked: null,
-      error: "Ungultige hochste Stat. Bitte Eingaben uberprufen.",
+      error: "invalid max level",
     };
   }
 
@@ -331,11 +389,11 @@ function calculateMountPlan(ist, soll) {
 
 function parseInteger(value, stat) {
   if (!/^-?\d+$/.test(value.trim())) {
-    throw new Error(`${stat}: Bitte nur ganze Zahlen eingeben.`);
+    throw new Error(`${stat}: Please enter only whole numbers.`);
   }
   const parsed = Number.parseInt(value, 10);
   if (parsed < 0) {
-    throw new Error(`${stat}: Werte mussen >= 0 sein.`);
+    throw new Error(`${stat}: Values must be >= 0.`);
   }
   return parsed;
 }
@@ -349,7 +407,9 @@ function readValues() {
     soll[stat] = parseInteger(sollInputs[stat].value, stat);
   }
 
-  return { ist, soll };
+  const maxLevel = maxLevelInput ? parseInteger(maxLevelInput.value, "Max level") : 0;
+
+  return { ist, soll, maxLevel };
 }
 
 function countItems(items) {
@@ -363,13 +423,13 @@ function countItems(items) {
 function formatResult(result) {
   const lines = [];
 
-  lines.push("Fehlende Stats:");
+  lines.push("Missing Stats:");
   const missingEntries = STATS
     .map((stat) => [stat, result.missingStats[stat]])
     .filter(([, amount]) => amount > 0);
 
   if (missingEntries.length === 0) {
-    lines.push("- Keine fehlenden Stats.");
+    lines.push("- No missing Stats.");
   } else {
     for (const [stat, amount] of missingEntries) {
       lines.push(`- ${stat}: ${amount}`);
@@ -377,17 +437,14 @@ function formatResult(result) {
   }
 
   lines.push("");
-  lines.push("Hochste Stat:");
-  lines.push(`- ${result.highestStatName}: ${result.highestStat}`);
-  lines.push("");
-  lines.push("Optimale Materialien:");
+  lines.push("Optimal Materials:");
 
   if (result.error !== null) {
     lines.push(`- ${result.error}`);
   } else if (result.count >= INF || result.picked === null) {
-    lines.push("- Keine passende Material-Kombination gefunden.");
+    lines.push("- No matching material combination found.");
   } else if (result.count === 0) {
-    lines.push("- Keine Materialien notig.");
+    lines.push("- No materials needed.");
   } else {
     const counter = countItems(result.picked);
     for (const [name, amount] of Object.entries(counter)) {
@@ -402,6 +459,9 @@ function resetFields() {
   for (const stat of STATS) {
     istInputs[stat].value = "0";
     sollInputs[stat].value = "0";
+  }
+  if (maxLevelInput) {
+    maxLevelInput.value = "0";
   }
   if (output) {
     output.textContent = "";
@@ -443,14 +503,14 @@ async function onCalculate() {
 
   try {
     await waitForPaint();
-    const { ist, soll } = readValues();
-    const result = calculateMountPlan(ist, soll);
+    const { ist, soll, maxLevel } = readValues();
+    const result = calculateMountPlan(ist, soll, maxLevel);
     if (output) {
       output.textContent = formatResult(result);
     }
   } catch (err) {
     if (output) {
-      output.textContent = `Ungultige Eingabe:\n${err.message}`;
+      output.textContent = `Invalid Input:\n${err.message}`;
     }
   } finally {
     if (calcBtn) {
